@@ -243,6 +243,15 @@
             background: #dc3545;
         }
 
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid #f5c6cb;
+        }
+
         @media (max-width: 768px) {
             .container {
                 height: 100vh;
@@ -265,7 +274,7 @@
         <div class="status-bar">
             <div class="status-indicator">
                 <div class="status-dot" id="statusDot"></div>
-                <span id="statusText">Connected to Bot API</span>
+                <span id="statusText">Connecting to Bot API...</span>
             </div>
             <span id="messageCount">Messages: 0</span>
         </div>
@@ -312,25 +321,45 @@
         const messageCount = document.getElementById('messageCount');
 
         let messageCountNum = 0;
-        const BOT_API_URL = 'https://wa-bot-suklm2nhva-el.a.run.app';
+        let apiStatus = 'checking';
+        
+        // Try multiple API endpoints
+        const API_ENDPOINTS = [
+            'https://wa-bot-suklm2nhva-el.a.run.app',
+            'http://localhost:3000'
+        ];
+        
+        let currentApiUrl = null;
 
         // Check API status on load
         checkApiStatus();
 
-        function checkApiStatus() {
-            fetch(`${BOT_API_URL}/health`)
-                .then(response => {
+        async function checkApiStatus() {
+            statusText.textContent = 'Checking API endpoints...';
+            
+            for (const endpoint of API_ENDPOINTS) {
+                try {
+                    const response = await fetch(`${endpoint}/health`, {
+                        method: 'GET',
+                        timeout: 5000
+                    });
+                    
                     if (response.ok) {
+                        currentApiUrl = endpoint;
                         statusDot.classList.remove('offline');
-                        statusText.textContent = 'Connected to Bot API';
-                    } else {
-                        throw new Error('API not responding');
+                        statusText.textContent = `Connected to Bot API (${endpoint.includes('localhost') ? 'Local' : 'Cloud'})`;
+                        apiStatus = 'connected';
+                        return;
                     }
-                })
-                .catch(error => {
-                    statusDot.classList.add('offline');
-                    statusText.textContent = 'Bot API Offline - Using Local Mode';
-                });
+                } catch (error) {
+                    console.log(`API endpoint ${endpoint} not available:`, error.message);
+                }
+            }
+            
+            // If no API is available, show offline status
+            statusDot.classList.add('offline');
+            statusText.textContent = 'Bot API Offline - Using Demo Mode';
+            apiStatus = 'offline';
         }
 
         function handleKeyPress(event) {
@@ -371,6 +400,18 @@
             typingIndicator.style.display = 'none';
         }
 
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            chatContainer.appendChild(errorDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            setTimeout(() => {
+                errorDiv.remove();
+            }, 5000);
+        }
+
         async function sendMessage(customMessage = null) {
             const message = customMessage || messageInput.value.trim();
             if (!message) return;
@@ -390,25 +431,33 @@
             sendButton.disabled = true;
 
             try {
-                const response = await fetch(`${BOT_API_URL}/api/test-message`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        message: message,
-                        userPhone: 'test_user_' + Date.now()
-                    })
-                });
+                let response;
+                
+                if (apiStatus === 'connected' && currentApiUrl) {
+                    // Try to send to actual API
+                    response = await fetch(`${currentApiUrl}/api/test-message`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            message: message,
+                            userPhone: 'test_user_' + Date.now()
+                        })
+                    });
 
-                if (response.ok) {
-                    const data = await response.json();
-                    hideTyping();
-                    
-                    // Add bot response
-                    addMessage(data.response || 'Thank you for your message. I\'m processing your request.');
+                    if (response.ok) {
+                        const data = await response.json();
+                        hideTyping();
+                        
+                        // Add bot response
+                        addMessage(data.response || 'Thank you for your message. I\'m processing your request.');
+                        return;
+                    } else {
+                        throw new Error('API request failed');
+                    }
                 } else {
-                    throw new Error('API request failed');
+                    throw new Error('No API available');
                 }
             } catch (error) {
                 hideTyping();
@@ -418,11 +467,20 @@
                     "I understand you're asking about court information. Let me help you with that.",
                     "Thank you for your inquiry. I'm here to assist you with court-related questions.",
                     "I can help you with case status, defect status, cause lists, and general court information.",
-                    "Please provide more specific details about what you need help with."
+                    "Please provide more specific details about what you need help with.",
+                    "For case status inquiries, please provide the case number or CNR.",
+                    "For defect status, I'll need the case number or CNR to check for you.",
+                    "I can help you find cause lists for different benches. Which bench are you interested in?"
                 ];
                 
                 const randomResponse = fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)];
                 addMessage(randomResponse);
+                
+                if (apiStatus === 'checking') {
+                    showError('API connection is being established. Using demo responses for now.');
+                } else if (apiStatus === 'offline') {
+                    showError('Bot API is currently offline. Using demo responses.');
+                }
             } finally {
                 sendButton.disabled = false;
                 messageInput.focus();
